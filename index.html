@@ -340,6 +340,14 @@
     color: #555555;
     line-height: 1.5;
   }
+  .cdc-disclaimer {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #EEDAE6;
+    font-size: 0.85rem;
+    color: #666666;
+    line-height: 1.55;
+  }
 
   .button-row {
     display: flex;
@@ -420,7 +428,7 @@
       <div class="header-block">
         <p class="eyebrow">See Where She Stands</p>
         <h1>Growth Calculator</h1>
-        <p class="subhead">Find out how your daughter compares to other children her age by calculating her height percentile.</p>
+        <p class="subhead">Find out how your daughter compares to other children her age and sex by calculating her height percentile.</p>
       </div>
 
       <div class="form-stack">
@@ -477,14 +485,12 @@
         </svg>
       </div>
 
-      <div class="outlier-warning" id="outlierWarning" role="alert">
-        <strong>Outside Typical Chart Range</strong>
-        <span id="outlierMessage"></span>
-      </div>
-
       <div>
-        <div class="percentile-label">The Takeaway</div>
+        <div class="percentile-label">What This Means</div>
         <div class="percentile-note" id="percentileNote"></div>
+        <div class="cdc-disclaimer">
+          This percentile calculation is based on data from the Centers for Disease Control (CDC) growth charts. The CDC growth charts are recommended for use in clinical practice and research to assess size and growth in U.S. infants, children, and adolescents.
+        </div>
       </div>
 
       <div class="button-row">
@@ -519,8 +525,19 @@ const PERCENTILES = [3, 5, 10, 25, 50, 75, 90, 95, 97];
 const LOW_Z = -2.326347874;
 const HIGH_Z = 2.326347874;
 
-// Approximate inverse standard normal CDF (Beasley-Springer-Moro) — used only to
-// derive a z-score from the interpolated percentile for outlier detection/display.
+// Standard normal CDF (Abramowitz & Stegun 7.1.26) — converts a z-score to
+// a probability (0–1).
+function normalCDF(z) {
+  const absZ = Math.abs(z);
+  const t = 1 / (1 + 0.2316419 * absZ);
+  const phi = 0.3989423 * Math.exp(-absZ * absZ / 2);
+  const poly = t * (0.319381530 + t * (-0.356563782 + t * (1.781477937 +
+                t * (-1.821255978 + t * 1.330274429))));
+  const cdfPositive = 1 - phi * poly;
+  return z >= 0 ? cdfPositive : 1 - cdfPositive;
+}
+
+// Approximate inverse standard normal CDF (Beasley-Springer-Moro).
 function inverseNormalCDF(p) {
   if (p <= 0) return -Infinity;
   if (p >= 1) return Infinity;
@@ -574,33 +591,39 @@ function findNearestKey(gender, ageMonths) {
   return bestKey;
 }
 
+// z-scores for each percentile in PERCENTILES — precomputed so we can
+// interpolate height vs z (linear in z-space gives smoother, more accurate
+// percentiles than linear-in-percentile interpolation, especially in the tails).
+const PERCENTILE_Z = PERCENTILES.map(p => inverseNormalCDF(p / 100));
+
 function calculatePercentile(heightCm, values) {
   // values = [p3, p5, p10, p25, p50, p75, p90, p95, p97]
   const last = values.length - 1;
 
-  // Below 3rd: linearly extrapolate using the p3→p5 slope so the percentile
-  // can drop below 3 (and below 1 for extreme outliers).
+  // Below 3rd: extrapolate in z-space using p3/p5 (much smoother than
+  // linear-in-percentile because the normal distribution compresses in the tails).
   if (heightCm < values[0]) {
-    const slope = (5 - 3) / (values[1] - values[0]);
-    const p = 3 - slope * (values[0] - heightCm);
+    const slopeZ = (PERCENTILE_Z[1] - PERCENTILE_Z[0]) / (values[1] - values[0]);
+    const z = PERCENTILE_Z[0] + slopeZ * (heightCm - values[0]);
+    const p = normalCDF(z) * 100;
     return { label: 'Below 3rd Percentile', boundary: true, percentile: p };
   }
-  // Above 97th: extrapolate using the p95→p97 slope so the percentile can
-  // exceed 97 (and exceed 100 for extreme outliers).
+  // Above 97th: extrapolate in z-space using p95/p97.
   if (heightCm > values[last]) {
-    const slope = (97 - 95) / (values[last] - values[last - 1]);
-    const p = 97 + slope * (heightCm - values[last]);
+    const slopeZ = (PERCENTILE_Z[last] - PERCENTILE_Z[last - 1]) / (values[last] - values[last - 1]);
+    const z = PERCENTILE_Z[last] + slopeZ * (heightCm - values[last]);
+    const p = normalCDF(z) * 100;
     return { label: 'Above 97th Percentile', boundary: true, percentile: p };
   }
 
+  // Inside range: interpolate linearly in z-space, then convert back to percentile.
   for (let i = 0; i < values.length - 1; i++) {
     const lo = values[i];
     const hi = values[i + 1];
     if (heightCm >= lo && heightCm <= hi) {
-      const pLo = PERCENTILES[i];
-      const pHi = PERCENTILES[i + 1];
       const frac = hi === lo ? 0 : (heightCm - lo) / (hi - lo);
-      const p = pLo + frac * (pHi - pLo);
+      const z = PERCENTILE_Z[i] + frac * (PERCENTILE_Z[i + 1] - PERCENTILE_Z[i]);
+      const p = normalCDF(z) * 100;
       return { label: null, boundary: false, percentile: p };
     }
   }
@@ -701,7 +724,7 @@ function resetDonut() {
 
 function formatPercentile(p) {
   if (p < 1) return '<1st';
-  if (p > 100) return '>100th';
+  if (p > 99) return '>99th';
   const n = Math.round(p);
   return n + ordinalSuffix(n);
 }
@@ -767,14 +790,17 @@ document.getElementById('calcBtn').addEventListener('click', function() {
   let noteText;
   let donutPct;
   const childWord = firstName ? escapeHtml(firstName) : 'Your daughter';
-  const underThirdMsg = `${childWord} falls below the third percentile, which is below average compared to her peers. Talk to her pediatrician to confirm if pGHD is the underlying cause.`;
-  const overThirdMsg = `${childWord} is in an average percentile for her age. Even if she's in line with her peers now, if she's showing other symptoms of pGHD, you should ask her pediatrician about her growth pattern.`;
-  const above99Msg = `${childWord}'s height exceeds the average of other children her age. It is unlikely she has pGHD but still consult with her pediatrician to determine the cause of her symptoms.`;
+  const childPossessive = firstName ? `${escapeHtml(firstName)}'s` : `your daughter's`;
+  const below1Msg = `${childWord} falls below the 1st percentile for her age and sex. Measurements below the 3rd percentile are key indicators of a growth-related issue, like pediatric growth hormone deficiency (pGHD). It is important that you schedule a visit with ${childPossessive} pediatrician to express your concerns about her growth and ask about testing for pGHD.`;
+  const between1And3Msg = `${childWord} falls below the 3rd percentile for her age and sex. Measurements below the 3rd percentile are key indicators of a growth-related issue, like pediatric growth hormone deficiency (pGHD). It is important that you schedule a visit with ${childPossessive} pediatrician to express your concerns about her growth and ask about testing for pGHD.`;
+  const above99Msg = `${childWord} falls above the 99th percentile for her age and sex. Pediatric growth hormone deficiency (pGHD) is typically associated with slower growth, not increased height. However, growth patterns can change over time, so it's important to continue monitoring her growth. If something still doesn't feel right, express your concerns with your child's pediatrician to determine the cause of her symptoms.`;
+  const middleMsg = (pctLabel) => `${childWord} falls within the ${pctLabel} percentile for her age and sex. Typically, measurements below the 3rd percentile are key indicators of a growth-related issue, like pediatric growth hormone deficiency (pGHD). Growth patterns can change over time, so it's important to continue monitoring her growth. If something still doesn't feel right, express your concerns with ${childPossessive} pediatrician.`;
 
-  function pickNote(p) {
-    if (p < 3) return underThirdMsg;
+  function pickNote(p, pctLabel) {
+    if (p < 1) return below1Msg;
+    if (p < 3) return between1And3Msg;
     if (p > 99) return above99Msg;
-    return overThirdMsg;
+    return middleMsg(pctLabel);
   }
 
   if (result.boundary) {
@@ -783,13 +809,13 @@ document.getElementById('calcBtn').addEventListener('click', function() {
     } else {
       percentileValueHtml = '';
     }
-    noteText = pickNote(result.percentile);
+    noteText = pickNote(result.percentile, formatPercentile(result.percentile));
     donutPct = result.percentile;
   } else {
     const pRounded = Math.round(result.percentile * 10) / 10;
     const pInt = Math.round(pRounded);
     percentileValueHtml = `${pRounded.toFixed(1)}${ordinalSuffix(pInt)}`;
-    noteText = pickNote(pRounded);
+    noteText = pickNote(pRounded, formatPercentile(pRounded));
     donutPct = result.percentile;
   }
 
@@ -804,23 +830,9 @@ document.getElementById('calcBtn').addEventListener('click', function() {
   const isHighOutlier = zScore > HIGH_Z;
   const isOutlier = isLowOutlier || isHighOutlier;
 
-  const donutWrap = document.getElementById('donutWrap');
-  const warningEl = document.getElementById('outlierWarning');
-  const warningMsg = document.getElementById('outlierMessage');
-
   // Keep the donut chart visible in all cases so boundary labels
-  // (<1st / >100th) render. Show the warning as additional context.
-  donutWrap.hidden = false;
-  if (isOutlier) {
-    warningEl.classList.add('visible');
-    if (isLowOutlier) {
-      warningMsg.textContent = 'This measurement falls below the 1st percentile.';
-    } else {
-      warningMsg.textContent = 'This measurement falls above the 99th percentile.';
-    }
-  } else {
-    warningEl.classList.remove('visible');
-  }
+  // (<1st / >99th) render.
+  document.getElementById('donutWrap').hidden = false;
   // --------------------------------------------------------------------------
 
   document.getElementById('resultSummary').innerHTML = summaryHtml;
