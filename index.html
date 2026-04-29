@@ -34,6 +34,9 @@
     margin: 0;
     line-height: 1.05;
     letter-spacing: -0.01em;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    hyphens: auto;
   }
   .header-block {
     display: flex;
@@ -434,7 +437,7 @@
       <div class="form-stack">
         <div class="field">
           <label for="firstName">First name (optional)</label>
-          <input type="text" id="firstName" autocomplete="off">
+          <input type="text" id="firstName" autocomplete="off" maxlength="19">
         </div>
 
         <div class="field">
@@ -449,11 +452,11 @@
           <div class="two-col">
             <div class="field">
               <label for="feet">Feet</label>
-              <input type="number" id="feet" min="0" max="8" step="1" inputmode="numeric" pattern="[0-9]*">
+              <input type="text" id="feet" inputmode="numeric" pattern="[0-9]*" autocomplete="off">
             </div>
             <div class="field">
               <label for="inches">Inches</label>
-              <input type="number" id="inches" min="0" max="11.99" step="0.1" inputmode="decimal" pattern="[0-9.]*">
+              <input type="text" id="inches" inputmode="decimal" pattern="[0-9.]*" autocomplete="off">
             </div>
           </div>
         </div>
@@ -504,6 +507,7 @@
   <div class="card email-card" id="emailCard" hidden>
     <div class="header-block">
       <h2>Email me these results</h2>
+      <p class="subhead">What you're noticing is worth tracking. A record over time gives her pediatrician the full picture, not just a single moment.</p>
     </div>
     <div class="field">
       <label for="emailInput">Email address</label>
@@ -673,14 +677,26 @@ document.querySelectorAll('.field input, .field select').forEach(el => {
   update();
 });
 
-// Restrict feet to digits only; inches to digits + one decimal point
-function restrictInput(inputEl, allowDecimal) {
+// Restrict feet to digits only; inches to digits + one decimal point.
+// Also caps the integer part to `maxIntDigits` so users can't type 99999.
+function restrictInput(inputEl, allowDecimal, maxIntDigits) {
   inputEl.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const allowedKeys = ['Backspace', 'Delete', 'Tab', 'Escape', 'Enter',
                          'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
     if (allowedKeys.includes(e.key)) return;
-    if (/^[0-9]$/.test(e.key)) return;
+    if (/^[0-9]$/.test(e.key)) {
+      // Block typing more than maxIntDigits digits before the decimal
+      const value = inputEl.value;
+      const dotIdx = value.indexOf('.');
+      const intPart = dotIdx === -1 ? value : value.slice(0, dotIdx);
+      const caretAtIntPart = inputEl.selectionStart <= (dotIdx === -1 ? value.length : dotIdx);
+      const hasSelection = inputEl.selectionStart !== inputEl.selectionEnd;
+      if (caretAtIntPart && !hasSelection && intPart.length >= maxIntDigits) {
+        e.preventDefault();
+      }
+      return;
+    }
     if (allowDecimal && e.key === '.' && !inputEl.value.includes('.')) return;
     e.preventDefault();
   });
@@ -688,19 +704,53 @@ function restrictInput(inputEl, allowDecimal) {
     const text = (e.clipboardData || window.clipboardData).getData('text');
     const regex = allowDecimal ? /^\d*\.?\d*$/ : /^\d*$/;
     if (!regex.test(text)) e.preventDefault();
+    // If valid format but too many integer digits, let it paste — the
+    // input handler below will truncate to maxIntDigits silently.
   });
-  inputEl.addEventListener('input', () => {
+  inputEl.addEventListener('input', (e) => {
     const regex = allowDecimal ? /[^0-9.]/g : /[^0-9]/g;
     let cleaned = inputEl.value.replace(regex, '');
     if (allowDecimal) {
       const parts = cleaned.split('.');
       if (parts.length > 2) cleaned = parts[0] + '.' + parts.slice(1).join('');
+      const segs = cleaned.split('.');
+      if (segs[0].length > maxIntDigits) segs[0] = segs[0].slice(0, maxIntDigits);
+      cleaned = segs.length > 1 ? segs[0] + '.' + segs[1] : segs[0];
+
+      // Auto-insert the decimal point once the user has typed maxIntDigits digits
+      // (only on forward-typing, not when deleting).
+      const isInserting = !e || !e.inputType || e.inputType.startsWith('insert');
+      if (isInserting && !cleaned.includes('.') && cleaned.length === maxIntDigits) {
+        cleaned += '.';
+      }
+    } else {
+      if (cleaned.length > maxIntDigits) cleaned = cleaned.slice(0, maxIntDigits);
     }
     if (cleaned !== inputEl.value) inputEl.value = cleaned;
   });
 }
-restrictInput(document.getElementById('feet'), false);
-restrictInput(document.getElementById('inches'), true);
+restrictInput(document.getElementById('feet'), false, 2);
+restrictInput(document.getElementById('inches'), true, 2);
+
+// Restrict first name to letters (and basic name punctuation) and <20 chars.
+(function restrictName() {
+  const nameEl = document.getElementById('firstName');
+  // Allow Unicode letters, spaces, hyphens, and apostrophes (for names like
+  // "Mary-Anne" or "O'Brien"). Anything else is stripped silently.
+  const allowed = /[^\p{L}\s'\-]/gu;
+  nameEl.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const navKeys = ['Backspace','Delete','Tab','Escape','Enter',
+                     'ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End'];
+    if (navKeys.includes(e.key)) return;
+    if (e.key.length === 1 && allowed.test(e.key)) e.preventDefault();
+  });
+  nameEl.addEventListener('input', () => {
+    let cleaned = nameEl.value.replace(allowed, '');
+    if (cleaned.length > 19) cleaned = cleaned.slice(0, 19);
+    if (cleaned !== nameEl.value) nameEl.value = cleaned;
+  });
+})();
 
 const DONUT_CIRCUMFERENCE = 2 * Math.PI * 54;
 let lastResultText = '';
@@ -758,11 +808,14 @@ document.getElementById('calcBtn').addEventListener('click', function() {
   const firstName = document.getElementById('firstName').value.trim();
   const ageYears = parseInt(document.getElementById('age').value, 10);
   const gender = 'G';
-  const feet = parseFloat(document.getElementById('feet').value);
-  const inches = parseFloat(document.getElementById('inches').value);
+  const feetRaw = document.getElementById('feet').value.trim();
+  const inchesRaw = document.getElementById('inches').value.trim();
+  const feet = parseFloat(feetRaw);
+  // If inches is left blank, treat it as 0.
+  const inches = inchesRaw === '' ? 0 : parseFloat(inchesRaw);
 
   if (!ageYears) { showError('Please select an age.'); return; }
-  if (isNaN(feet) || feet < 0) { showError('Please enter valid feet.'); return; }
+  if (feetRaw === '' || isNaN(feet) || feet < 0) { showError('Please enter valid feet.'); return; }
   if (isNaN(inches) || inches < 0 || inches >= 12) { showError('Inches must be between 0 and 11.99.'); return; }
 
   const totalInches = feet * 12 + inches;
@@ -777,12 +830,13 @@ document.getElementById('calcBtn').addEventListener('click', function() {
   const result = calculatePercentile(heightCm, values);
 
   const genderLabel = 'Girl';
-  const namePart = firstName ? escapeHtml(firstName) : 'Your Child';
-  const namePartPlain = firstName || 'Your Child';
+  const namePart = firstName ? escapeHtml(firstName) : 'Your Daughter';
+  const namePartPlain = firstName || 'Your Daughter';
   const heightDisplay = `${feet} ft ${inches} in (${heightCm.toFixed(1)} cm)`;
 
+  const summaryPrefix = firstName ? `${namePart} — ` : '';
   const summaryHtml = `
-    ${namePart} — ${genderLabel}, ${ageYears} year${ageYears === 1 ? '' : 's'} old<br>
+    ${summaryPrefix}${genderLabel}, ${ageYears} year${ageYears === 1 ? '' : 's'} old<br>
     Height: ${heightDisplay}
   `;
 
@@ -793,7 +847,7 @@ document.getElementById('calcBtn').addEventListener('click', function() {
   const childPossessive = firstName ? `${escapeHtml(firstName)}'s` : `your daughter's`;
   const below1Msg = `${childWord} falls below the 1st percentile for her age and sex. Measurements below the 3rd percentile are key indicators of a growth-related issue, like pediatric growth hormone deficiency (pGHD). It is important that you schedule a visit with ${childPossessive} pediatrician to express your concerns about her growth and ask about testing for pGHD.`;
   const between1And3Msg = `${childWord} falls below the 3rd percentile for her age and sex. Measurements below the 3rd percentile are key indicators of a growth-related issue, like pediatric growth hormone deficiency (pGHD). It is important that you schedule a visit with ${childPossessive} pediatrician to express your concerns about her growth and ask about testing for pGHD.`;
-  const above99Msg = `${childWord} falls above the 99th percentile for her age and sex. Pediatric growth hormone deficiency (pGHD) is typically associated with slower growth, not increased height. However, growth patterns can change over time, so it's important to continue monitoring her growth. If something still doesn't feel right, express your concerns with your child's pediatrician to determine the cause of her symptoms.`;
+  const above99Msg = `${childWord} falls above the 99th percentile for her age and sex. Pediatric growth hormone deficiency (pGHD) is typically associated with slower growth, not increased height. However, growth patterns can change over time, so it's important to continue monitoring her growth. If something still doesn't feel right, express your concerns with ${childWord}'s pediatrician to determine the cause of her symptoms.`;
   const middleMsg = (pctLabel) => `${childWord} falls within the ${pctLabel} percentile for her age and sex. Typically, measurements below the 3rd percentile are key indicators of a growth-related issue, like pediatric growth hormone deficiency (pGHD). Growth patterns can change over time, so it's important to continue monitoring her growth. If something still doesn't feel right, express your concerns with ${childPossessive} pediatrician.`;
 
   function pickNote(p, pctLabel) {
