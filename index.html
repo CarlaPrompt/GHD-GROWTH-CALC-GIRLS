@@ -412,6 +412,37 @@
   }
   .email-status.visible { display: block; }
 
+  .consent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .consent-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    color: #444444;
+  }
+  .consent-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin: 2px 0 0 0;
+    accent-color: #C97EB2;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .consent-item .consent-label {
+    flex: 1;
+  }
+  .consent-item .consent-label strong {
+    color: #222222;
+    font-weight: 700;
+    margin-right: 4px;
+  }
+
   @media (max-width: 560px) {
     body { padding: 24px 16px; }
     .card { padding: 32px 24px; gap: 28px; }
@@ -513,6 +544,18 @@
       <label for="emailInput">Email address</label>
       <input type="email" id="emailInput" autocomplete="email">
     </div>
+
+    <div class="consent-list">
+      <label class="consent-item">
+        <input type="checkbox" id="consentPrivacy">
+        <span class="consent-label"><strong>Privacy Notice:</strong> By clicking the box, I certify that I am a resident of the United States and 18 years or older and agree to Ascendis Pharma Terms of Use. I understand and agree that the information I provide will be used in line with the Ascendis Pharma Privacy Policy, including to provide me with marketing information, such as newsletters and updates, and to contact me for my opinion regarding products, programs, and services. I understand the I at any time may unsubscribe by clicking on the designated link in the material.</span>
+      </label>
+      <label class="consent-item">
+        <input type="checkbox" id="consentMarketing">
+        <span class="consent-label"><strong>Consent:</strong> By clicking the box, I confirm that I have given my consent to the collection and processing of the information provided as answers to my questions. This information will solely be used to tailor our communications to you. You may at any time withdraw your consent. For more information, please see our Privacy Policy.</span>
+      </label>
+    </div>
+
     <button id="emailBtn" type="button">Send Results</button>
     <div class="error" id="emailError"></div>
     <div class="email-status" id="emailStatus">Opening your email client…</div>
@@ -918,8 +961,16 @@ document.getElementById('emailBtn').addEventListener('click', function() {
   const emailInput = document.getElementById('emailInput');
   const emailError = document.getElementById('emailError');
   const emailStatus = document.getElementById('emailStatus');
+  const consentPrivacy = document.getElementById('consentPrivacy');
+  const consentMarketing = document.getElementById('consentMarketing');
   emailError.classList.remove('visible');
   emailStatus.classList.remove('visible');
+
+  if (!consentPrivacy.checked || !consentMarketing.checked) {
+    emailError.textContent = 'Please check both consent boxes to continue.';
+    emailError.classList.add('visible');
+    return;
+  }
 
   const email = emailInput.value.trim();
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
