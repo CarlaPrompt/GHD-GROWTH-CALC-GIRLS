@@ -540,6 +540,16 @@
       <h2>Email me these results</h2>
       <p class="subhead">What you're noticing is worth tracking. A record over time gives her pediatrician the full picture, not just a single moment.</p>
     </div>
+    <div class="two-col">
+      <div class="field">
+        <label for="emailFirstName">First Name</label>
+        <input type="text" id="emailFirstName" autocomplete="given-name" maxlength="40">
+      </div>
+      <div class="field">
+        <label for="emailLastName">Last Name</label>
+        <input type="text" id="emailLastName" autocomplete="family-name" maxlength="40">
+      </div>
+    </div>
     <div class="field">
       <label for="emailInput">Email address</label>
       <input type="email" id="emailInput" autocomplete="email">
@@ -775,12 +785,13 @@ function restrictInput(inputEl, allowDecimal, maxIntDigits) {
 restrictInput(document.getElementById('feet'), false, 2);
 restrictInput(document.getElementById('inches'), true, 2);
 
-// Restrict first name to letters (and basic name punctuation) and <20 chars.
-(function restrictName() {
-  const nameEl = document.getElementById('firstName');
+// Restrict name fields to letters (and basic name punctuation) up to maxLen chars.
+function restrictNameField(nameEl, maxLen) {
+  if (!nameEl) return;
   // Allow Unicode letters, spaces, hyphens, and apostrophes (for names like
   // "Mary-Anne" or "O'Brien"). Anything else is stripped silently.
   const allowed = /[^\p{L}\s'\-]/gu;
+  nameEl.setAttribute('maxlength', String(maxLen));
   nameEl.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const navKeys = ['Backspace','Delete','Tab','Escape','Enter',
@@ -790,10 +801,13 @@ restrictInput(document.getElementById('inches'), true, 2);
   });
   nameEl.addEventListener('input', () => {
     let cleaned = nameEl.value.replace(allowed, '');
-    if (cleaned.length > 19) cleaned = cleaned.slice(0, 19);
+    if (cleaned.length > maxLen) cleaned = cleaned.slice(0, maxLen);
     if (cleaned !== nameEl.value) nameEl.value = cleaned;
   });
-})();
+}
+restrictNameField(document.getElementById('firstName'), 19);
+restrictNameField(document.getElementById('emailFirstName'), 20);
+restrictNameField(document.getElementById('emailLastName'), 20);
 
 const DONUT_CIRCUMFERENCE = 2 * Math.PI * 54;
 let lastResultText = '';
@@ -958,6 +972,8 @@ document.getElementById('backBtn').addEventListener('click', function() {
 });
 
 document.getElementById('emailBtn').addEventListener('click', function() {
+  const emailFirstName = document.getElementById('emailFirstName');
+  const emailLastName = document.getElementById('emailLastName');
   const emailInput = document.getElementById('emailInput');
   const emailError = document.getElementById('emailError');
   const emailStatus = document.getElementById('emailStatus');
@@ -965,6 +981,14 @@ document.getElementById('emailBtn').addEventListener('click', function() {
   const consentMarketing = document.getElementById('consentMarketing');
   emailError.classList.remove('visible');
   emailStatus.classList.remove('visible');
+
+  const firstNameVal = emailFirstName.value.trim();
+  const lastNameVal = emailLastName.value.trim();
+  if (!firstNameVal || !lastNameVal) {
+    emailError.textContent = 'Please enter your first and last name.';
+    emailError.classList.add('visible');
+    return;
+  }
 
   if (!consentPrivacy.checked || !consentMarketing.checked) {
     emailError.textContent = 'Please check both consent boxes to continue.';
@@ -986,7 +1010,8 @@ document.getElementById('emailBtn').addEventListener('click', function() {
   }
 
   const subject = encodeURIComponent('Growth Percentile Results');
-  const body = encodeURIComponent(lastResultText);
+  const greeting = `Hi ${firstNameVal} ${lastNameVal},\n\n`;
+  const body = encodeURIComponent(greeting + lastResultText);
   window.location.href = `mailto:${encodeURIComponent(email)}?subject=${subject}&body=${body}`;
   emailStatus.classList.add('visible');
 });
